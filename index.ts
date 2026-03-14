@@ -9,7 +9,19 @@ interface ClientSocket extends WebSocket {
 const publisher = createClient();
 await publisher.connect();
 
-const wss = new WebSocketServer({ port: 8080 });
+const websocketServerFactory = (
+  port: number,
+): Promise<{ wss: WebSocketServer; port: number }> => {
+  return new Promise<{ wss: WebSocketServer; port: number }>((resolve) => {
+    let wss = new WebSocketServer({ port });
+
+    wss.on("error", () => resolve(websocketServerFactory(port + 1)));
+
+    wss.on("listening", () => resolve({ wss, port }));
+  });
+};
+let { wss, port } = await websocketServerFactory(8080);
+console.log(`started wss on port ${port}`);
 const connections: Record<string, ClientSocket> = {};
 
 wss.on("connection", async (socket) => {
@@ -47,7 +59,11 @@ wss.on("connection", async (socket) => {
 const subscriber = createClient();
 await subscriber.connect();
 await subscriber.subscribe("chat", (message) => {
-  console.log("redis --> wss:", message);
+  console.log(
+    "redis --> wss:",
+    message,
+    `across ${Object.values(connections).length} socket(s)`,
+  );
 
   Object.values(connections).forEach((socket) => socket.send(message));
 });
