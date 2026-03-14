@@ -103,13 +103,13 @@ await subscriber.subscribe("chat", (message) => {
 const shutdown = async () => {
   try {
     console.log("SIGTERM received. Shutting down Redis subscriber.");
+    await removeServer(id);
     await subscriber.quit();
     await redisClient.quit();
   } catch {
     subscriber.destroy();
     redisClient.destroy();
   } finally {
-    await removeServer(id);
     process.exit(0);
   }
 };
