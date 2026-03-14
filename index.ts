@@ -1,33 +1,38 @@
-import {createClient} from "redis";
-import {v4} from "uuid";
-import WebSocket, {WebSocketServer} from "ws";
+import { createClient } from "redis";
+import { v4 } from "uuid";
+import WebSocket, { WebSocketServer } from "ws";
 
-const loadbalancerUrl = `http://localhost:3000`;
-const removeServer = async () => {
-  await fetch(`${loadbalancerUrl}/delete-server`, {
-    method: "DELETE",
-    body: JSON.stringify({
-      name: id,
-    })
-  })
+interface Server {
+  id: string;
+  url: string;
 }
 
-const addServer = async (name: string, url: string) => {
-  await fetch(`${loadbalancerUrl}/create-server`, {
-    method: "POST",
-    body: JSON.stringify({
-      name,
-      url,
-    })
-  });
-}
+const key = "servers";
+const redisClient = createClient();
+await redisClient.connect();
+
+const getServerList = async (): Promise<Server[]> =>
+  JSON.parse((await redisClient.get(key)) ?? "[]") ?? [];
+
+const removeServer = async (id: string) => {
+  await redisClient.set(
+    key,
+    JSON.stringify(
+      (await getServerList()).filter((server: Server) => server.id !== id),
+    ),
+  );
+};
+
+const addServer = async (id: string, url: string) => {
+  await redisClient.set(
+    key,
+    JSON.stringify([...(await getServerList()), { id, url }]),
+  );
+};
 
 interface ClientSocket extends WebSocket {
   isAlive: boolean;
 }
-
-const publisher = createClient();
-await publisher.connect();
 
 type WebsocketServerInfo = {
   wss: WebSocketServer;
@@ -35,20 +40,20 @@ type WebsocketServerInfo = {
   id: string;
 };
 
-const websocketServerFactory = (
-    port: number,
-): Promise<WebsocketServerInfo> => {
+const websocketServerFactory = (port: number): Promise<WebsocketServerInfo> => {
   return new Promise<WebsocketServerInfo>((resolve) => {
-    let wss = new WebSocketServer({port});
+    let wss = new WebSocketServer({ port });
 
     wss.on("error", () => resolve(websocketServerFactory(port + 1)));
 
-    wss.on("listening", () => resolve({wss, port, id: v4()}));
+    wss.on("listening", () => resolve({ wss, port, id: v4() }));
   });
 };
-let {wss, port, id} = await websocketServerFactory(8080);
+let { wss, port, id } = await websocketServerFactory(8080);
 console.log(`started wss on port ${port}`);
-void addServer(id, `ws://localhost:${port}`).catch(() => console.log("oh no"));
+void addServer(id, `ws://localhost:${port}`).catch((e) =>
+  console.log("oh no", e),
+);
 const connections: Record<string, ClientSocket> = {};
 
 wss.on("connection", async (socket) => {
@@ -62,7 +67,7 @@ wss.on("connection", async (socket) => {
   });
 
   client.on("message", async (rawData) => {
-    await publisher.publish("chat", rawData.toString());
+    await redisClient.publish("chat", rawData.toString());
 
     console.log("wss --> redis:", JSON.parse(rawData.toString()));
   });
@@ -73,10 +78,10 @@ wss.on("connection", async (socket) => {
   });
 
   client.send(
-      JSON.stringify({
-        type: "welcome",
-        connected_at: new Date().toISOString(),
-      }),
+    JSON.stringify({
+      type: "welcome",
+      connected_at: new Date().toISOString(),
+    }),
   );
 
   connections[uuid] = client;
@@ -87,9 +92,9 @@ const subscriber = createClient();
 await subscriber.connect();
 await subscriber.subscribe("chat", (message) => {
   console.log(
-      "redis --> wss:",
-      message,
-      `across ${Object.values(connections).length} socket(s)`,
+    "redis --> wss:",
+    message,
+    `across ${Object.values(connections).length} socket(s)`,
   );
 
   Object.values(connections).forEach((socket) => socket.send(message));
@@ -99,12 +104,12 @@ const shutdown = async () => {
   try {
     console.log("SIGTERM received. Shutting down Redis subscriber.");
     await subscriber.quit();
-    await publisher.quit();
+    await redisClient.quit();
   } catch {
     subscriber.destroy();
-    publisher.destroy();
+    redisClient.destroy();
   } finally {
-    await removeServer();
+    await removeServer(id);
     process.exit(0);
   }
 };

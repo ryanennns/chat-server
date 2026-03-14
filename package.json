@@ -1,7 +1,7 @@
 {
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node --watch index.ts"
+    "dev": "node --watch index.ts"
   },
   "dependencies": {
     "prettier": "^3.8.1",
