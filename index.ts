@@ -1,40 +1,46 @@
-import { WebSocketServer } from "ws";
 import { createClient } from "redis";
 import { v4 } from "uuid";
+import WebSocket, { WebSocketServer } from "ws";
+
+interface ClientSocket extends WebSocket {
+  isAlive: boolean;
+}
 
 const publisher = createClient();
 await publisher.connect();
 
 const wss = new WebSocketServer({ port: 8080 });
-const connections = {};
+const connections: Record<string, ClientSocket> = {};
+
 wss.on("connection", async (socket) => {
+  const client = socket as ClientSocket;
   const uuid = v4();
 
-  socket.isAlive = true;
+  client.isAlive = true;
 
-  socket.on("pong", () => {
-    socket.isAlive = true;
+  client.on("pong", () => {
+    client.isAlive = true;
   });
 
-  socket.on("message", async (rawData) => {
+  client.on("message", async (rawData) => {
     await publisher.publish("chat", rawData.toString());
 
     console.log("wss --> redis:", JSON.parse(rawData.toString()));
   });
 
-  socket.on("close", () => {
+  client.on("close", () => {
     delete connections[uuid];
     console.log("closing");
   });
 
-  socket.send(
+  client.send(
     JSON.stringify({
       type: "welcome",
       connected_at: new Date().toISOString(),
     }),
   );
 
-  connections[uuid] = socket;
+  connections[uuid] = client;
   console.log(Object.keys(connections));
 });
 
